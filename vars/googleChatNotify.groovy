@@ -1,5 +1,4 @@
 def call(String webhookCredId, String status) {
-    webhookCredId = "google-chat-webhook"
 
     // Who triggered the build
     def causes = currentBuild.getBuildCauses()
@@ -10,12 +9,18 @@ def call(String webhookCredId, String status) {
 
     if (status == "FAILURE") {
         def log = currentBuild.rawBuild?.getLog(500) ?: []
-        def index = log.findIndexOf { it =~ /(ERROR|Exception|Failed|Caused by)/ }
 
-        if (index > 0) {
-            int start = Math.max(0, index - 5)
-            int end = Math.min(log.size(), index + 15)
+        // broader failure matcher
+        def idx = log.findIndexOf { line ->
+            line =~ /(ERROR|Error|error|FAILURE|Failed|Exception|Traceback|Caused by)/
+        }
+
+        if (idx > 0) {
+            int start = Math.max(0, idx - 10)
+            int end = Math.min(log.size(), idx + 20)
             reason = log[start..end].join("\n")
+        } else {
+            reason = "Build failed but no specific error found in logs."
         }
     }
 
