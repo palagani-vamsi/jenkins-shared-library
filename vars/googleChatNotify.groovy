@@ -1,4 +1,5 @@
 def call(String webhookCredId, String status) {
+    webhookCredId = "google-chat-webhook"
 
     // Who triggered the build
     def causes = currentBuild.getBuildCauses()
