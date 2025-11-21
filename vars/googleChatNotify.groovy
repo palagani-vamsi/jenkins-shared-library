@@ -1,9 +1,25 @@
 def call(String webhookUrl, String status) {
 
+    // Who triggered?
     def causes = currentBuild.getBuildCauses()
-    def triggeredBy = causes.collect { it.shortDescription }.join(', ')
+    String triggeredBy = causes.collect { it.shortDescription }.join(', ')
 
-    def reason = currentBuild.rawBuild?.getLog(50)?.join('\n') ?: "No reason available"
+    // Extract error lines (before 5, after 15)
+    String errorContext = "No error detected"
+
+    if (status == "FAILURE") {
+        def log = currentBuild.rawBuild?.getLog(500) ?: []
+
+        def index = log.findIndexOf { line ->
+            line =~ /(ERROR|Exception|Failed|Caused by)/
+        }
+
+        if (index > 0) {
+            int start = Math.max(0, index - 5)
+            int end = Math.min(log.size(), index + 15)
+            errorContext = log[start..end].join("\n")
+        }
+    }
 
     def buildUrl = env.RUN_DISPLAY_URL ?: env.BUILD_URL
 
@@ -15,24 +31,19 @@ Build Number: *${env.BUILD_NUMBER}*
 Triggered By: *${triggeredBy}*
 
 *Build Result:* ${status}
-*Reason:* ${status == 'SUCCESS' ? 'Build completed successfully' : reason}
+*Reason:* ${status == 'SUCCESS' ? 'Build completed successfully' : errorContext}
 
-🔗 *Build URL:* ${buildUrl}
+🔗 Build URL: ${buildUrl}
 """
 
-    try {
-        withEnv(["HOOK_URL=${webhookUrl}"]) {
-            sh '''
-                curl -X POST "$HOOK_URL" \
-                -H "Content-Type: application/json" \
-                -d @- <<EOF
-                {
-                  "text": "'"${message.replace("\n", "\\n")}"'"
-                }
-EOF
-            '''
-        }
-    } catch (err) {
-        echo "Google Chat notification failed: ${err}"
+    // ---- Google Chat message sender (sandbox safe) ----
+    def json = """{"text": "${message.replace('"','\\"').replace("\n","\\n")}"}"""
+
+    withCredentials([string(credentialsId: webhookUrl, variable: 'CHAT_URL')]) {
+        sh """
+            curl -X POST \$CHAT_URL \
+            -H "Content-Type: application/json" \
+            -d '${json}'
+        """
     }
 }
