@@ -1,4 +1,4 @@
-def call(String webhookUrl) {
+def call(String status, String webhookUrl) {
 
     String result = currentBuild.currentResult ?: "UNKNOWN"
     String buildUrl = env.BUILD_URL
