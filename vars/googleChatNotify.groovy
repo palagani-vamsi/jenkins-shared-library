@@ -1,4 +1,4 @@
-def call(String status, String webhookUrl) {
+def call(String webhookUrl) {
 
     String result = currentBuild.currentResult ?: "UNKNOWN"
     String buildUrl = env.BUILD_URL
@@ -7,14 +7,10 @@ def call(String status, String webhookUrl) {
     def causes = currentBuild.rawBuild.getCauses()
     String triggeredBy = causes?.collect { it.getShortDescription() }.join(", ")
 
-    // -----------------------------
-    // OVERALL REASON DETECTOR
-    // -----------------------------
+    // Dynamic reason
     String reason = getReason(result)
 
-    // -----------------------------
-    // Create Google Chat Message
-    // -----------------------------
+    // Build Message
     def message = """
 *Jenkins Build ${result}*
 
@@ -32,7 +28,7 @@ Triggered By: ${triggeredBy}
 }
 
 //
-// Detect reason for FAILURE / UNSTABLE / ABORTED / SUCCESS / NOT_BUILT
+// MASTER REASON HANDLER
 //
 String getReason(String result) {
 
@@ -45,38 +41,52 @@ String getReason(String result) {
             return getUnstableReason()
 
         case "ABORTED":
-            return "Build was manually aborted by user or system."
+            return "Build was manually aborted."
 
         case "NOT_BUILT":
-            return "Build was skipped due to unmet conditions or disabled stages."
+            return getNotBuiltReason()
 
         case "SUCCESS":
             return "Build completed successfully."
 
         default:
-            return "No specific reason found."
+            return "Reason not detected."
     }
 }
 
 //
-// Extract real FAILURE reason
+// **ACCURATE FAILURE REASON**
+// 5 lines before error + error line + 15 lines after
 //
 String getFailureReason() {
     try {
-        def failure = currentBuild.rawBuild.getExecution().getCauseOfFailure()
-        if (failure) {
-            return failure.getMessage()
+        def log = currentBuild.rawBuild.getLog(500) // more lines available
+
+        // Find the error line index
+        int index = log.findIndexOf { line ->
+            line =~ /(ERROR|Exception|Caused by|Failed|Traceback)/
         }
 
-        // fallback → last 10 log lines
-        return currentBuild.rawBuild.getLog(15).join("\n")
-    } catch (e) {
+        if (index == -1) {
+            // Fallback to last 20 lines
+            return log.takeRight(20).join("\n")
+        }
+
+        // Get 5 lines before and 15 after
+        int start = Math.max(0, index - 5)
+        int end = Math.min(log.size(), index + 15)
+
+        def snippet = log.subList(start, end)
+
+        return snippet.join("\n")
+    }
+    catch (Exception e) {
         return "Unable to detect failure reason."
     }
 }
 
 //
-// Extract UNSTABLE reason
+// UNSTABLE REASON
 //
 String getUnstableReason() {
     try {
@@ -87,14 +97,40 @@ String getUnstableReason() {
             return "Test Failures: ${testResult.failCount}"
         }
 
-        return "Marked unstable due to failed tests, warnings, or quality gate."
-    } catch (e) {
+        return "Marked UNSTABLE due to warnings or quality gate failure."
+    } catch (Exception e) {
         return "Unable to detect unstable reason."
     }
 }
 
 //
-// Send message to Google Chat
+// DYNAMIC NOT_BUILT REASON
+//
+String getNotBuiltReason() {
+    try {
+        def log = currentBuild.rawBuild.getLog(200)
+
+        if (log.find { it =~ /skipped due to when condition/ })
+            return "Stage skipped due to 'when' condition."
+
+        if (log.find { it =~ /Returning early|exiting pipeline/ })
+            return "Pipeline exited early."
+
+        if (log.find { it =~ /(could not be allocated|No node available)/ })
+            return "Agent/node allocation failure."
+
+        if (log.find { it =~ /(Skipping checkout|SCM skipped)/ })
+            return "SCM checkout skipped."
+
+        return "Pipeline marked NOT_BUILT (stage skipped)."
+
+    } catch (Exception e) {
+        return "Unable to detect NOT_BUILT reason."
+    }
+}
+
+//
+// Send message
 //
 void sendMessageToGoogleChat(String webhookUrl, String text) {
     def payload = """{ "text": "${text.replace("\"","'")}" }"""
