@@ -1,26 +1,35 @@
 def call(String webhookCredId, String status) {
 
-    // Who triggered the build
+    // -----------------------------
+    // Who triggered the build?
+    // -----------------------------
     def causes = currentBuild.getBuildCauses()
     def triggeredBy = causes.collect { it.shortDescription }.join(', ')
 
-    // Extract reason
+    // -----------------------------
+    // Default Reason
+    // -----------------------------
     String reason = "No issues detected."
 
+    // -----------------------------
+    // Extract Log & Find Error Reason
+    // -----------------------------
     if (status == "FAILURE") {
+
         def log = currentBuild.rawBuild?.getLog(500) ?: []
 
-        // broader failure matcher
-        def idx = log.findIndexOf { line ->
+        // Look for first matching failure line
+        int idx = log.findIndexOf { line ->
             line =~ /(ERROR|Error|error|FAILURE|Failed|Exception|Traceback|Caused by)/
         }
 
         if (idx > 0) {
             int start = Math.max(0, idx - 10)
-            int end = Math.min(log.size(), idx + 20)
-            reason = log[start..end].join("\n")
+            int end   = Math.min(log.size() - 1, idx + 20)
+
+            reason = log.subList(start, end).join("\n")
         } else {
-            reason = "Build failed but no specific error found in logs."
+            reason = "Failure occurred but no identifiable error pattern found in logs."
         }
     }
 
@@ -29,11 +38,26 @@ def call(String webhookCredId, String status) {
     }
 
     if (status == "NOT_BUILT") {
-        reason = "Build skipped due to unmet stage conditions."
+        reason = "Build skipped due to conditional logic."
     }
 
+    // -----------------------------
+    // Build URL
+    // -----------------------------
     def buildUrl = env.RUN_DISPLAY_URL ?: env.BUILD_URL
 
+    // -----------------------------
+    // LOG SIZE (for all non-success builds)
+    // -----------------------------
+    int logSize = 0
+    if (status != "SUCCESS") {
+        def logLines = currentBuild.rawBuild?.getLog(10000) ?: []
+        logSize = logLines.size()
+    }
+
+    // -----------------------------
+    // Final Notification Message
+    // -----------------------------
     def msg = """
 Jenkins Build *${status}*
 
@@ -42,11 +66,16 @@ Build Number: *${env.BUILD_NUMBER}*
 Triggered By: *${triggeredBy}*
 
 *Result:* ${status}
-*Reason:* ${reason}
+*Log Size:* ${logSize} lines
+*Reason:* 
+${reason}
 
 🔗 ${buildUrl}
 """
 
+    // -----------------------------
+    // Send to Google Chat
+    // -----------------------------
     withCredentials([string(credentialsId: webhookCredId, variable: 'CHAT_URL')]) {
         sh """
             curl -X POST "\$CHAT_URL" \
@@ -54,4 +83,5 @@ Triggered By: *${triggeredBy}*
             -d '{ "text": "${msg.replace('"','\\"').replace("\n","\\n")}" }'
         """
     }
+
 }
