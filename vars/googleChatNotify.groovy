@@ -1,49 +1,51 @@
-def call(String webhookUrl, String status) {
+def call(String webhookCredId, String status) {
 
-    // Who triggered?
+    // Who triggered the build
     def causes = currentBuild.getBuildCauses()
-    String triggeredBy = causes.collect { it.shortDescription }.join(', ')
+    def triggeredBy = causes.collect { it.shortDescription }.join(', ')
 
-    // Extract error lines (before 5, after 15)
-    String errorContext = "No error detected"
+    // Extract reason
+    String reason = "No issues detected."
 
     if (status == "FAILURE") {
         def log = currentBuild.rawBuild?.getLog(500) ?: []
-
-        def index = log.findIndexOf { line ->
-            line =~ /(ERROR|Exception|Failed|Caused by)/
-        }
+        def index = log.findIndexOf { it =~ /(ERROR|Exception|Failed|Caused by)/ }
 
         if (index > 0) {
             int start = Math.max(0, index - 5)
             int end = Math.min(log.size(), index + 15)
-            errorContext = log[start..end].join("\n")
+            reason = log[start..end].join("\n")
         }
+    }
+
+    if (status == "UNSTABLE") {
+        reason = "Build unstable due to test failures or warnings."
+    }
+
+    if (status == "NOT_BUILT") {
+        reason = "Build skipped due to unmet stage conditions."
     }
 
     def buildUrl = env.RUN_DISPLAY_URL ?: env.BUILD_URL
 
-    def message = """
+    def msg = """
 Jenkins Build *${status}*
 
 Job: *${env.JOB_NAME}*
 Build Number: *${env.BUILD_NUMBER}*
 Triggered By: *${triggeredBy}*
 
-*Build Result:* ${status}
-*Reason:* ${status == 'SUCCESS' ? 'Build completed successfully' : errorContext}
+*Result:* ${status}
+*Reason:* ${reason}
 
-🔗 Build URL: ${buildUrl}
+🔗 ${buildUrl}
 """
 
-    // ---- Google Chat message sender (sandbox safe) ----
-    def json = """{"text": "${message.replace('"','\\"').replace("\n","\\n")}"}"""
-
-    withCredentials([string(credentialsId: webhookUrl, variable: 'CHAT_URL')]) {
+    withCredentials([string(credentialsId: webhookCredId, variable: 'CHAT_URL')]) {
         sh """
-            curl -X POST \$CHAT_URL \
+            curl -X POST "\$CHAT_URL" \
             -H "Content-Type: application/json" \
-            -d '${json}'
+            -d '{ "text": "${msg.replace('"','\\"').replace("\n","\\n")}" }'
         """
     }
 }
