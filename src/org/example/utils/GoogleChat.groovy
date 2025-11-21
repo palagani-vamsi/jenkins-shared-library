@@ -7,10 +7,14 @@ def call(String webhookUrl) {
     def causes = currentBuild.rawBuild.getCauses()
     String triggeredBy = causes?.collect { it.getShortDescription() }.join(", ")
 
-    // Get dynamic reason based on build result
+    // -----------------------------
+    // OVERALL REASON DETECTOR
+    // -----------------------------
     String reason = getReason(result)
 
-    // Message Body
+    // -----------------------------
+    // Create Google Chat Message
+    // -----------------------------
     def message = """
 *Jenkins Build ${result}*
 
@@ -28,7 +32,7 @@ Triggered By: ${triggeredBy}
 }
 
 //
-// MASTER REASON CONTROLLER
+// Detect reason for FAILURE / UNSTABLE / ABORTED / SUCCESS / NOT_BUILT
 //
 String getReason(String result) {
 
@@ -44,7 +48,7 @@ String getReason(String result) {
             return "Build was manually aborted by user or system."
 
         case "NOT_BUILT":
-            return getNotBuiltReason()
+            return "Build was skipped due to unmet conditions or disabled stages."
 
         case "SUCCESS":
             return "Build completed successfully."
@@ -55,17 +59,16 @@ String getReason(String result) {
 }
 
 //
-// FAILURE REASON
+// Extract real FAILURE reason
 //
 String getFailureReason() {
     try {
-        // Real exception if available
         def failure = currentBuild.rawBuild.getExecution().getCauseOfFailure()
         if (failure) {
             return failure.getMessage()
         }
 
-        // fallback: last 15 lines of console log
+        // fallback → last 10 log lines
         return currentBuild.rawBuild.getLog(15).join("\n")
     } catch (e) {
         return "Unable to detect failure reason."
@@ -73,7 +76,7 @@ String getFailureReason() {
 }
 
 //
-// UNSTABLE REASON
+// Extract UNSTABLE reason
 //
 String getUnstableReason() {
     try {
@@ -84,49 +87,14 @@ String getUnstableReason() {
             return "Test Failures: ${testResult.failCount}"
         }
 
-        return "Marked unstable due to test failures, warnings, or quality gate."
+        return "Marked unstable due to failed tests, warnings, or quality gate."
     } catch (e) {
         return "Unable to detect unstable reason."
     }
 }
 
 //
-// NOT_BUILT REASON — DYNAMIC
-//
-String getNotBuiltReason() {
-    try {
-        def log = currentBuild.rawBuild.getLog(250)
-
-        // Stage skipped by when condition
-        def skippedWhen = log.find { it =~ /Stage ".*" skipped due to when condition/ }
-        if (skippedWhen) return "Stage skipped due to 'when' condition."
-
-        // Pipeline early exit
-        def earlyExit = log.find { it =~ /(Returning early|Early exit|Exiting pipeline)/ }
-        if (earlyExit) return "Pipeline exited early before stage execution."
-
-        // Node/Agent allocation issue
-        def noAgent = log.find { it =~ /(Agent.*could not be allocated|No node available|Executor unavailable)/ }
-        if (noAgent) return "Agent/node allocation failure."
-
-        // SCM checkout skipped
-        def scmSkip = log.find { it =~ /(Skipping checkout|SCM skipped|No changes detected)/ }
-        if (scmSkip) return "SCM checkout skipped (no changes or disabled)."
-
-        // Parallel branch skip
-        def parallelSkip = log.find { it =~ /(Not executing.*was skipped|Parallel branch)/ }
-        if (parallelSkip) return "Parallel branch marked NOT_BUILT due to sibling failure."
-
-        // Nothing matched
-        return "Build marked NOT_BUILT due to skipped stage or unmet conditions."
-    }
-    catch (Exception e) {
-        return "Unable to detect NOT_BUILT reason."
-    }
-}
-
-//
-// SEND MESSAGE TO GOOGLE CHAT
+// Send message to Google Chat
 //
 void sendMessageToGoogleChat(String webhookUrl, String text) {
     def payload = """{ "text": "${text.replace("\"","'")}" }"""
