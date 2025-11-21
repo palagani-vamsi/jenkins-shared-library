@@ -1,16 +1,12 @@
 def call(String webhookUrl, String status) {
 
-    // Always create a complete serializable cause description
     def causes = currentBuild.getBuildCauses()
     def triggeredBy = causes.collect { it.shortDescription }.join(', ')
 
-    // Get dynamic reason safely
     def reason = currentBuild.rawBuild?.getLog(50)?.join('\n') ?: "No reason available"
 
-    // Build link
-    def buildUrl = env.RUN_DISPLAY_URL ?: "${env.BUILD_URL}"
+    def buildUrl = env.RUN_DISPLAY_URL ?: env.BUILD_URL
 
-    // Prepare message
     def message = """
 Jenkins Build *${status}*
 
